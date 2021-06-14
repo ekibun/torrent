@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:torrent/src/bencode.dart';
+import 'package:torrent/src/peer.dart';
 
 class KNode {
   final ByteString id;
@@ -13,6 +14,8 @@ class KNode {
   final int timestamp;
   KNode(this.id, this.ip, this.port)
       : timestamp = DateTime.now().millisecondsSinceEpoch;
+
+  static KNode clone(KNode node) => KNode(node.id, node.ip, node.port);
 
   int distanceTo(ByteString nid) {
     for (var i = 0; i < id.length; ++i) {
@@ -24,9 +27,7 @@ class KNode {
   }
 
   @override
-  String toString() {
-    return 'KNode(id=$id, addr=${ip.address}:$port)';
-  }
+  String toString() => 'KNode(id=$id, addr=${ip.address}:$port)';
 }
 
 class KrpcError {
@@ -53,7 +54,7 @@ class Krpc {
     Uri(host: 'dht.transmissionbt.com', port: 6881)
   ];
 
-  Krpc({ByteString? id}) : id = id ?? _randomID();
+  Krpc({ByteString? id}) : id = id ?? ByteString.rand(20);
 
   Future bootstrap() async {
     await start();
@@ -69,20 +70,25 @@ class Krpc {
     final oldNode = bucket.firstWhere((e) => e.distanceTo(node.id) == 0,
         orElse: () => node);
     if (oldNode != node) bucket.remove(oldNode);
-    if (bucket.length < 4) {
+    if (bucket.length < 20) {
       bucket.add(node);
       return true;
     } else {
       final firstNode = bucket.removeFirst();
-      try {
-        final rsp = await ping(firstNode.ip, firstNode.port);
-        if (firstNode.distanceTo(rsp['id']) == 0) {
-          bucket.add(firstNode);
-        } else {
-          throw KrpcError(203, 'Protocol Error: invalid arguments');
+      if (DateTime.now().millisecondsSinceEpoch - firstNode.timestamp <
+          15 * 60 * 1000) {
+        bucket.add(KNode.clone(firstNode));
+      } else {
+        try {
+          final rsp = await ping(firstNode.ip, firstNode.port);
+          if (firstNode.distanceTo(rsp['id']) == 0) {
+            bucket.add(KNode.clone(firstNode));
+          } else {
+            throw KrpcError(203, 'Protocol Error: invalid arguments');
+          }
+        } catch (e) {
+          return addNode(node);
         }
-      } catch (e) {
-        return addNode(node);
       }
     }
     return false;
@@ -101,8 +107,7 @@ class Krpc {
         if (!(resp is Map)) return;
         final type = resp['y'];
         if (!(type is ByteString) || type.string != 'r') {
-          print('recieve: $resp');
-          // TODO response
+          print('<-- $resp');
           return;
         }
         final pending = _pending.remove(resp['t']?.toInt());
@@ -142,13 +147,7 @@ class Krpc {
     final tid = _tid;
     final completer = Completer<Map>();
     _pending[tid] = completer;
-    print('send $type:$data');
-    Future.delayed(Duration(seconds: 15), () {
-      if (!completer.isCompleted) {
-        _pending.remove(tid);
-        completer.completeError(KrpcError(408, 'Request Timeout'));
-      }
-    });
+    print('-->$type($tid):$data');
     _socket!.send(
         Bencode.encode({
           't': ByteString.int(tid, 2),
@@ -158,7 +157,9 @@ class Krpc {
         }),
         address,
         port);
-    return completer.future;
+    return completer.future.timeout(Duration(seconds: 15)).whenComplete(() {
+      if (_pending[tid] == completer) _pending.remove(tid);
+    });
   }
 
   void addBootstrapNode(Uri url) async {
@@ -247,34 +248,41 @@ class Krpc {
           if (!nodeAdded) return;
           info_hashs.forEach((hash) async {
             try {
-              _processGetPeers(await get_peers(node.ip, node.port, hash));
+              _processGetPeers(hash, await get_peers(node.ip, node.port, hash));
             } catch (e) {
               print(e);
             }
           });
-          // findNode(node.ip, node.port, node.id)
-          //     .then((n) => processFindNode(n), onError: (_) {});
+          findNode(node.ip, node.port, node.id).then(
+            (n) => _processNodes(n['nodes']),
+            onError: (_) {},
+          );
         }));
-    // print(_buckets);
+    // print(_buckets.entries.map((e) => '${e.key}[${e.value.length}]'));
   }
 
-  void _processGetPeers(Map rsp) {
+  void _processGetPeers(ByteString hash, Map rsp) {
     if (rsp['nodes'] is ByteString) {
       _processNodes(rsp['nodes']);
     }
     final peers = rsp['values'];
     if (!(peers is List)) return;
-    peers.forEach((element) {});
+    peers.forEach((peerData) async {
+      if (!(peerData is ByteString) || peerData.bytes.length != 6) return;
+      final peer = Peer(
+          InternetAddress.fromRawAddress(
+              Uint8List.fromList(peerData.bytes.sublist(0, 4))),
+          ByteString(peerData.bytes.sublist(4, 6)).toInt());
+      try {
+        await peer.handshake(hash, ByteString.rand(20));
+      } catch (e) {
+        // print(e);
+      }
+    });
   }
 
   void _stopSocket(RawDatagramSocket? socket) {
     if (socket == null) return;
-    print('$socket stoped');
     socket.close();
-  }
-
-  static ByteString _randomID([int length = 20]) {
-    final rand = Random();
-    return ByteString(List.generate(length, (_) => rand.nextInt(256)));
   }
 }

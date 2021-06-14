@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 class ByteString {
@@ -27,6 +28,11 @@ class ByteString {
       : bytes = Uint8List.fromList(List.generate(str.length ~/ 2,
             (i) => int.parse(str.substring(i * 2, (i + 1) * 2), radix: 16)));
 
+  static ByteString rand(int length) {
+    final rand = Random();
+    return ByteString(List.generate(length, (_) => rand.nextInt(256)));
+  }
+
   @override
   String toString() {
     return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
@@ -37,10 +43,10 @@ class ByteString {
   }
 }
 
-class _Scanner {
+class BencodeScanner {
   Uint8List data;
   var pos = 0;
-  _Scanner(this.data);
+  BencodeScanner(this.data);
 
   Object? next() {
     switch (String.fromCharCode(data[pos++])) {
@@ -66,15 +72,13 @@ class _Scanner {
         while (String.fromCharCode(data[pos]) != 'e') {
           pos++;
         }
-        pos++;
-        return int.parse(String.fromCharCodes(data, begin, pos - 1));
+        return int.parse(String.fromCharCodes(data, begin, pos++));
       default:
         final begin = pos - 1;
         while (String.fromCharCode(data[pos]) != ':') {
           pos++;
         }
-        pos++;
-        final len = int.parse(String.fromCharCodes(data, begin, pos - 1));
+        final len = int.parse(String.fromCharCodes(data, begin, pos++));
         pos += len;
         return ByteString(data.sublist(pos - len, pos));
     }
@@ -99,9 +103,8 @@ class Bencode {
         ret.add(encode(item));
       }
       ret.add(ascii.encode('e'));
-    } else {
-      final str =
-          data is ByteString ? data.bytes : utf8.encode(data.toString());
+    } else if (data is ByteString || data is String) {
+      final str = data is ByteString ? data.bytes : utf8.encode(data);
       ret.add(ascii.encode('${str.length}:'));
       ret.add(str);
     }
@@ -109,7 +112,7 @@ class Bencode {
   }
 
   static dynamic decode(Uint8List data) {
-    final scanner = _Scanner(data);
+    final scanner = BencodeScanner(data);
     return scanner.next();
   }
 }

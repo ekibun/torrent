@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:torrent/src/bencode.dart';
 import 'package:test/test.dart';
+import 'package:torrent/src/bencode.dart';
 
 void main() {
   group('bencode', () {
