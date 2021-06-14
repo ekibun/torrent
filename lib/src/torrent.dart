@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:torrent/src/bencode.dart';
-import 'package:torrent/src/tracker.dart';
 import 'package:crypto/crypto.dart' show sha1;
 
 class TorrentFile {
@@ -22,6 +21,7 @@ class TorrentFile {
 class Torrent {
   final Map _raw;
   final List<TorrentFile> files;
+  final List<String> announces;
   final int? creationDate;
   final String? createdBy;
   final int pieceLength;
@@ -30,6 +30,7 @@ class Torrent {
   Torrent._(
     this._raw,
     this.files,
+    this.announces,
     this.pieceLength,
     this.pieces, [
     this.creationDate,
@@ -37,16 +38,16 @@ class Torrent {
   ]);
 
   static Torrent parse(Map data) {
-    final trackers = <Tracker>[];
+    final trackers = <String>[];
     final announceList = data['announce-list'];
     final announce = data['announce'];
     if (announceList is List) {
       for (var announces in announceList) {
-        trackers.addAll(List<Tracker>.from(
-            announces.map((announce) => Tracker(announce.string))));
+        trackers
+            .addAll(List.from(announces.map((announce) => announce.string)));
       }
     } else if (announce is ByteString) {
-      trackers.add(Tracker(announce.string));
+      trackers.add(announce.string);
     }
     final torrentFiles = <TorrentFile>[];
     final files = data['info']['files'];
@@ -67,6 +68,7 @@ class Torrent {
     return Torrent._(
       data,
       torrentFiles,
+      trackers,
       data['info']['piece length'],
       data['info']['pieces'].bytes,
       data['creation date'],

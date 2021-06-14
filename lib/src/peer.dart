@@ -119,12 +119,24 @@ class Peer {
   bool _amInterested = false;
   bool _isChoking = true;
   bool _isInterested = false;
+
+  bool get amChoking => _amChoking;
+  bool get amInterested => _amInterested;
+  bool get isChoking => _isChoking;
+  bool get isInterested => _isInterested;
+
   final _pending = <int, Completer<Uint8List>>{};
 
   Peer._(this._socket, this.reserved, this.id, this._buffer, this._task) {
     if (_buffer.isNotEmpty) Future.delayed(Duration.zero, _consumeData);
     _task.peers.add(this);
-    _keepAliveTimer = Timer.periodic(Duration(seconds: 20), (_) => keepalive());
+    _keepAliveTimer = Timer.periodic(Duration(seconds: 20), (_) {
+      if (DateTime.now().difference(_lastActive).inMinutes > 2) {
+        close();
+      } else {
+        keepalive();
+      }
+    });
   }
 
   Future close() {
@@ -144,12 +156,10 @@ class Peer {
       final buffer = _buffer.sublist(4, length + 4);
       _buffer.removeRange(0, length + 4);
       if (length == 0) {
-        print('<--keepalive');
         _lastActive = DateTime.now();
       } else {
         final id = buffer[0];
         final data = buffer.sublist(1, length);
-        print('<--$id[len=${data.length}]');
         final pending = _pending.remove(id);
         if (pending != null) {
           pending.complete(Uint8List.fromList(data));
@@ -189,7 +199,6 @@ class Peer {
   }
 
   void keepalive() {
-    print('-->keepalive');
     _socket.add(Uint8List(4));
   }
 
@@ -246,7 +255,6 @@ class Peer {
   }
 
   void _sendPacket(int id, [List<int>? data]) {
-    print('-->$id[len=${data?.length ?? 0}]');
     _socket.add(<int>[...ByteString.int((data?.length ?? 0) + 1, 4).bytes, id]);
     if (data != null) _socket.add(data);
   }
