@@ -262,23 +262,23 @@ class Krpc {
   }
 
   void _processGetPeers(ByteString hash, Map rsp) {
-    if (rsp['nodes'] is ByteString) {
-      _processNodes(rsp['nodes']);
-    }
-    final peers = rsp['values'];
-    if (!(peers is List)) return;
-    peers.forEach((peerData) async {
-      if (!(peerData is ByteString) || peerData.bytes.length != 6) return;
-      final peer = Peer(
-          InternetAddress.fromRawAddress(
-              Uint8List.fromList(peerData.bytes.sublist(0, 4))),
-          ByteString(peerData.bytes.sublist(4, 6)).toInt());
-      try {
-        await peer.handshake(hash, ByteString.rand(20));
-      } catch (e) {
-        // print(e);
-      }
-    });
+    // if (rsp['nodes'] is ByteString) {
+    //   _processNodes(rsp['nodes']);
+    // }
+    // final peers = rsp['values'];
+    // if (!(peers is List)) return;
+    // peers.forEach((peerData) async {
+    //   if (!(peerData is ByteString) || peerData.bytes.length != 6) return;
+    //   final peer = Peer(
+    //       InternetAddress.fromRawAddress(
+    //           Uint8List.fromList(peerData.bytes.sublist(0, 4))),
+    //       ByteString(peerData.bytes.sublist(4, 6)).toInt());
+    //   try {
+    //     await peer.handshake(hash, ByteString.rand(20));
+    //   } catch (e) {
+    //     // print(e);
+    //   }
+    // });
   }
 
   void _stopSocket(RawDatagramSocket? socket) {

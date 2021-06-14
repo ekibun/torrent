@@ -111,8 +111,8 @@ class Bencode {
     return ret.toBytes();
   }
 
-  static dynamic decode(Uint8List data) {
-    final scanner = BencodeScanner(data);
+  static dynamic decode(Uint8List data, [int pos = 0]) {
+    final scanner = BencodeScanner(data)..pos = pos;
     return scanner.next();
   }
 }
