@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:torrent/src/bencode.dart';
-import 'package:torrent/src/peer.dart';
 import 'package:torrent/src/tracker.dart';
 import 'package:crypto/crypto.dart' show sha1;
 
@@ -14,19 +13,14 @@ class TorrentFile {
     this.length, [
     this.offset = 0,
   ]);
-}
 
-class TorrentTask {
-  final ByteString peerId;
-  final List<Tracker> trackers = [];
-  final List<Peer> peers = [];
-
-  TorrentTask([ByteString? peerId]) : peerId = peerId ?? ByteString.rand(20);
+  @override
+  String toString() =>
+      'File(path=${path.join('/')}, len=$length, offset=$offset)';
 }
 
 class Torrent {
-  final ByteString infoHash;
-  final TorrentTask task;
+  final Map _raw;
   final List<TorrentFile> files;
   final int? creationDate;
   final String? createdBy;
@@ -34,8 +28,7 @@ class Torrent {
   final Uint8List pieces;
 
   Torrent._(
-    this.infoHash,
-    this.task,
+    this._raw,
     this.files,
     this.pieceLength,
     this.pieces, [
@@ -43,7 +36,7 @@ class Torrent {
     this.createdBy,
   ]);
 
-  static Torrent parse(Map data, {TorrentTask? task}) {
+  static Torrent parse(Map data) {
     final trackers = <Tracker>[];
     final announceList = data['announce-list'];
     final announce = data['announce'];
@@ -72,8 +65,7 @@ class Torrent {
       torrentFiles.add(TorrentFile([name.string], data['info']['length']));
     }
     return Torrent._(
-      parseInfoHash(Bencode.encode(data['info'])),
-      task ?? (TorrentTask()..trackers.addAll(trackers)),
+      data,
       torrentFiles,
       data['info']['piece length'],
       data['info']['pieces'].bytes,
@@ -81,6 +73,9 @@ class Torrent {
       data['created by']?.string,
     );
   }
+
+  Map get raw => _raw;
+  ByteString get infoHash => parseInfoHash(Bencode.encode(_raw['info']));
 
   static ByteString parseInfoHash(Uint8List info) =>
       ByteString(sha1.convert(info).bytes);
