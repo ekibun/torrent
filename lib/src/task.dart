@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:base32/base32.dart';
 import 'package:torrent/src/bencode.dart';
 import 'package:torrent/src/peer.dart';
+import 'package:torrent/src/socket.dart';
 import 'package:torrent/src/torrent.dart';
 import 'package:torrent/src/tracker.dart';
 
@@ -39,9 +40,9 @@ class TorrentTask {
     trackers.forEach((tracker) => tracker.start());
   }
 
-  void onPeer(PeerInfo peer) {
+  void onPeer(Peer peer) {
     if (peers.any((p) => p.ip == peer.ip && p.port == peer.port)) return;
-    peer.handshake(this).catchError((_) {});
+    peer.handshake(TcpPeerSocket.connect, this).catchError((_) {});
   }
 
   static TorrentTask fromMagnet(String uri) {
@@ -71,16 +72,15 @@ class TorrentTask {
           final announce = await tracker.announce();
           if (completer.isCompleted) return;
           final peerInfos = announce['peers'];
-          if (!(peerInfos is List<PeerInfo>) || peerInfos.isEmpty) return;
-          peerInfos.forEach((peerInfo) async {
-            Peer? peer;
+          if (!(peerInfos is List<Peer>) || peerInfos.isEmpty) return;
+          peerInfos.forEach((peer) async {
             try {
-              peer = await peerInfo.handshake(this);
+              await peer.handshake(TcpPeerSocket.connect, this);
               completer.complete(Torrent.parse({
                 'info': Bencode.decode(await peer.getMetadata()),
               }));
             } catch (_) {
-              await peer?.close();
+              await peer.close();
             }
           });
         })()

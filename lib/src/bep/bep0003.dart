@@ -8,81 +8,27 @@ import 'package:torrent/src/socket.dart';
 import 'package:torrent/src/task.dart';
 
 const PIECE_SIZE = 16 * 1024;
-const PROTOCOL = 'BitTorrent protocol';
+const BITTORRENT_PROTOCOL = 'BitTorrent protocol';
 
-abstract class BasePeerInfo<TSocket extends PeerSocket,
-    TPeer extends BasePeer> {
+abstract class PeerBep0003 {
   final InternetAddress ip;
   final int port;
-  BasePeerInfo(this.ip, this.port);
+  PeerBep0003(this.ip, this.port);
 
-  @override
-  String toString() => 'PeerInfo(${ip.address}:$port)';
-
-  Future<TSocket> connect();
-
-  TPeer createPeer(
-    TSocket socket,
-    ByteString reserved,
-    ByteString id,
-    TorrentTask task,
-  );
-
-  Uint8List get reserved => Uint8List(8);
-  Future<TPeer> handshake(TorrentTask task) {
-    final completer = Completer<TPeer>();
-    final buffer = <int>[];
-    TPeer? peer;
-    connect().then((socket) {
-      socket.onData = (data) {
-        buffer.addAll(data);
-        if (completer.isCompleted) {
-          return peer?.consumeData(buffer);
-        }
-        if (buffer.length < PROTOCOL.length + 49) return;
-        if (buffer[0] != PROTOCOL.length ||
-            ByteString(buffer.sublist(1, 1 + PROTOCOL.length)).string !=
-                PROTOCOL) {
-          throw SocketException('Bad handshake response');
-        }
-        final reserved =
-            ByteString(data.sublist(PROTOCOL.length + 1, PROTOCOL.length + 9));
-        final id = ByteString(
-            data.sublist(PROTOCOL.length + 29, PROTOCOL.length + 49));
-        buffer.removeRange(0, PROTOCOL.length + 49);
-        peer = createPeer(socket, reserved, id, task);
-        Future.delayed(Duration.zero, () => peer?.consumeData(buffer));
-        completer.complete(peer);
-      };
-      socket.add(<int>[
-        PROTOCOL.length,
-        ...ByteString.str(PROTOCOL).bytes,
-        ...ByteString.str('\x00\x00\x00\x00\x00\x10\x00\x00').bytes, // bep-10
-        ...task.infoHash.bytes,
-        ...task.peerId.bytes,
-      ]);
-    }).catchError((e, stack) {
-      completer.completeError(e, stack);
-    });
-    return completer.future;
-  }
-}
-
-abstract class BasePeer<TSocket extends PeerSocket> {
-  final ByteString id;
-  final ByteString reserved;
-  final TorrentTask task;
-  final TSocket _socket;
+  ByteString? id;
+  ByteString? reserved;
+  PeerSocket? _socket;
   Timer? _keepAliveTimer;
-  // final _pending = <int, Completer<Uint8List>>{};
+  TorrentTask? task;
 
-  InternetAddress get ip => _socket.address;
-  int get port => _socket.port;
+  final Completer _handshakeCompleter = Completer();
+
+  Uint8List get selfReserved => Uint8List(8);
 
   @override
-  String toString() => 'PeerInfo(${ip.address}:$port)';
+  String toString() => 'Peer(${ip.address}:$port)';
 
-  BasePeer(this.task, this.id, this.reserved, this._socket) {
+  void onHandshaked() {
     _keepAliveTimer = Timer.periodic(Duration(seconds: 20), (_) {
       if (DateTime.now().difference(_lastActive).inMinutes > 2) {
         close();
@@ -92,25 +38,65 @@ abstract class BasePeer<TSocket extends PeerSocket> {
     });
   }
 
-  Future close() {
-    task.peers.remove(this);
-    _keepAliveTimer?.cancel();
-    return _socket.close();
+  Future handshake(
+    Future<PeerSocket> Function(InternetAddress, int) connector,
+    TorrentTask task,
+  ) {
+    this.task = task;
+    if (_handshakeCompleter.isCompleted) {
+      throw SocketException('$this already connected');
+    }
+
+    final buffer = <int>[];
+    connector(ip, port).then((socket) {
+      _socket = socket;
+      socket.onData = (data) {
+        buffer.addAll(data);
+        if (_handshakeCompleter.isCompleted) {
+          return consumeData(buffer);
+        }
+        if (buffer.length < BITTORRENT_PROTOCOL.length + 49) return;
+        if (buffer[0] != BITTORRENT_PROTOCOL.length ||
+            ByteString(buffer.sublist(1, 1 + BITTORRENT_PROTOCOL.length))
+                    .string !=
+                BITTORRENT_PROTOCOL) {
+          throw SocketException('Bad handshake response');
+        }
+        reserved = ByteString(data.sublist(
+            BITTORRENT_PROTOCOL.length + 1, BITTORRENT_PROTOCOL.length + 9));
+        id = ByteString(data.sublist(
+            BITTORRENT_PROTOCOL.length + 29, BITTORRENT_PROTOCOL.length + 49));
+        buffer.removeRange(0, BITTORRENT_PROTOCOL.length + 49);
+        Future.delayed(Duration.zero, () => consumeData(buffer));
+        _handshakeCompleter.complete();
+        onHandshaked();
+      };
+      socket.add(<int>[
+        BITTORRENT_PROTOCOL.length,
+        ...ByteString.str(BITTORRENT_PROTOCOL).bytes,
+        ...selfReserved,
+        ...task.infoHash.bytes,
+        ...task.peerId.bytes,
+      ]);
+    }).catchError((e, stack) {
+      if (!_handshakeCompleter.isCompleted) {
+        _handshakeCompleter.completeError(e, stack);
+      }
+    });
+    return _handshakeCompleter.future;
   }
 
-  // Future<Uint8List> sendPacket(int id, [List<int>? data]) {
-  //   final completer = Completer<Uint8List>();
-  //   _pending[id] = completer;
-  //   _sendPacket(id, data ?? []);
-  //   return completer.future;
-  // }
+  Future close() async {
+    _keepAliveTimer?.cancel();
+    return _socket?.close();
+  }
 
   void sendPacket([int? id, List<int>? data]) {
     final post = List<int>.from(
         ByteString.int((data?.length ?? 0) + (id == null ? 0 : 1), 4).bytes);
     if (id != null) post.add(id);
     if (data != null) post.addAll(data);
-    _socket.add(post);
+    _socket?.add(post);
   }
 
   final Bitfield bitfield = Bitfield();
@@ -143,11 +129,6 @@ abstract class BasePeer<TSocket extends PeerSocket> {
   }
 
   void onMessage(int id, Uint8List data) {
-    // final pending = _pending.remove(id);
-    // if (pending != null) {
-    //   pending.complete(Uint8List.fromList(data));
-    //   return;
-    // }
     switch (id) {
       case 0: // choke
         _isChoking = true;
@@ -172,7 +153,7 @@ abstract class BasePeer<TSocket extends PeerSocket> {
       case 7: // piece
         final index = ByteString(data.sublist(0, 4)).toInt();
         final offset = ByteString(data.sublist(4, 8)).toInt();
-        task.onPiece(index, offset, data.sublist(8));
+        task?.onPiece.call(index, offset, data.sublist(8));
         return;
       case 8: // cancel
         return;

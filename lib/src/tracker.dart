@@ -29,9 +29,9 @@ class Tracker {
         .data);
     final peers = rsp['peers'];
     if (peers is ByteString && peers.length > 0) {
-      rsp['peers'] = List<PeerInfo>.generate(
+      rsp['peers'] = List<Peer>.generate(
           peers.length ~/ 6,
-          (i) => PeerInfo(
+          (i) => Peer(
               InternetAddress.fromRawAddress(
                   Uint8List.fromList(peers.bytes.sublist(i * 6, i * 6 + 4))),
               ByteString(peers.bytes.sublist(i * 6 + 4, i * 6 + 6)).toInt()));
@@ -44,7 +44,7 @@ class Tracker {
   Future _recursive() async {
     final resp = await announce();
     final peers = resp['peers'];
-    if (peers is List<PeerInfo>) {
+    if (peers is List<Peer>) {
       peers.forEach((peer) => _task.onPeer(peer));
     }
   }

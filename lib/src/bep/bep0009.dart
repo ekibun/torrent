@@ -5,12 +5,11 @@ import 'dart:typed_data';
 import 'package:torrent/src/bencode.dart';
 import 'package:torrent/src/bep/bep0003.dart';
 import 'package:torrent/src/bep/bep0010.dart';
-import 'package:torrent/src/socket.dart';
 import 'package:torrent/src/torrent.dart';
 
 const _EXTENDED_METADATA_ID = 'ut_metadata';
 
-mixin PeerBep0009<S extends PeerSocket> on PeerBep0010<S> {
+mixin PeerBep0009 on PeerBep0010 {
   int metaDataSize = 0;
 
   final _pending = <int, Completer<Uint8List>>{};
@@ -63,7 +62,7 @@ mixin PeerBep0009<S extends PeerSocket> on PeerBep0010<S> {
           _EXTENDED_METADATA_ID, Bencode.encode({'msg_type': 0, 'piece': pid}));
       metaDataBuffer.setAll(pid * metaDataPieceSize, await completer.future);
     }
-    if (Torrent.parseInfoHash(metaDataBuffer).string != task.infoHash.string) {
+    if (Torrent.parseInfoHash(metaDataBuffer).string != task?.infoHash.string) {
       throw SocketException('infohash not matched');
     }
     return metaDataBuffer;

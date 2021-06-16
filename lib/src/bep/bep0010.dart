@@ -1,25 +1,28 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:torrent/src/bencode.dart';
 import 'package:torrent/src/bep/bep0003.dart';
-import 'package:torrent/src/socket.dart';
-
-mixin PeerInfoBep0010<S extends PeerSocket, P extends BasePeer>
-    on BasePeerInfo<S, P> {
-  @override
-  Uint8List get reserved => super.reserved..[5] |= 0x10;
-}
 
 const EXTENDED_PROTOCOL = 20;
 
-mixin PeerBep0010<S extends PeerSocket> on BasePeer<S> {
+mixin PeerBep0010 on PeerBep0003 {
+  @override
+  Uint8List get selfReserved => super.selfReserved..[5] |= 0x10;
+
+  bool get isSupportedExtendMessage => (reserved?[5] ?? 0) & 0x10 != 0;
+
   Map<String, void Function(Uint8List)> get onExtendMessage => {};
 
   Map<String, int> _extendMessageId = {};
   final Completer _extendHandshakeCompleter = Completer();
   Future get extendHandshaked => _extendHandshakeCompleter.future;
+
+  @override
+  void onHandshaked() {
+    extendHandshake().catchError((_) {});
+    super.onHandshaked();
+  }
 
   @override
   void onMessage(int id, Uint8List data) {
@@ -54,6 +57,4 @@ mixin PeerBep0010<S extends PeerSocket> on BasePeer<S> {
     ]);
     return extendHandshaked;
   }
-
-  bool get isSupportedExtendMessage => reserved[5] & 0x10 != 0;
 }

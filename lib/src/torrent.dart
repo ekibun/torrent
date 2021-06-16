@@ -19,7 +19,7 @@ class TorrentFile {
 }
 
 class Torrent {
-  final Map _raw;
+  final Map raw;
   final List<TorrentFile> files;
   final List<String> announces;
   final int? creationDate;
@@ -28,7 +28,7 @@ class Torrent {
   final Uint8List pieces;
 
   Torrent._(
-    this._raw,
+    this.raw,
     this.files,
     this.announces,
     this.pieceLength,
@@ -76,8 +76,7 @@ class Torrent {
     );
   }
 
-  Map get raw => _raw;
-  ByteString get infoHash => parseInfoHash(Bencode.encode(_raw['info']));
+  ByteString get infoHash => parseInfoHash(Bencode.encode(raw['info']));
 
   static ByteString parseInfoHash(Uint8List info) =>
       ByteString(sha1.convert(info).bytes);
