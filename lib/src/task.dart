@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:base32/base32.dart';
 import 'package:torrent/src/bencode.dart';
@@ -76,56 +76,18 @@ class TorrentTask {
             Peer? peer;
             try {
               peer = await peerInfo.handshake(this);
-              if (completer.isCompleted) throw 'completed';
-              if (peer.reserved.bytes[5] & 0x10 == 0) {
-                throw '$peer not support bep-10';
-              }
-              final handshake = Bencode.decode(
-                  await peer.sendPacket(20, [
-                    0,
-                    ...Bencode.encode({
-                      'm': {
-                        'ut_metadata': 1,
-                      }
-                    })
-                  ]),
-                  1);
-              final metaDataSize = handshake['metadata_size'] ?? 0;
-              final utMetaData = handshake['m']?['ut_metadata'] ?? 0;
-              if (metaDataSize == 0 || utMetaData == 0) {
-                throw '$peer has no metadata';
-              }
-              const metaDataPieceSize = PIECE_SIZE;
-              final metaDataPieceLength =
-                  (metaDataSize / metaDataPieceSize).ceil();
-              final metaDataBuffer = Uint8List(metaDataSize);
-              for (var pid = 0; pid < metaDataPieceLength; ++pid) {
-                final piece = await peer.sendPacket(20, [
-                  utMetaData,
-                  ...ByteString(Bencode.encode({'msg_type': 0, 'piece': pid}))
-                      .bytes,
-                ]);
-                if (completer.isCompleted) return;
-                final scanner = BencodeScanner(piece)..pos = 1;
-                scanner.next();
-                metaDataBuffer.setAll(
-                    pid * metaDataPieceSize, piece.sublist(scanner.pos));
-              }
-              if (Torrent.parseInfoHash(metaDataBuffer).string !=
-                  infoHash.string) {
-                throw 'infohash not matched';
-              }
-              _torrent = Torrent.parse({
-                'info': Bencode.decode(metaDataBuffer),
-              });
-              completer.complete(_torrent);
+              completer.complete(Torrent.parse({
+                'info': Bencode.decode(await peer.getMetadata()),
+              }));
             } catch (_) {
               await peer?.close();
             }
           });
         })()
             .catchError((_) {}))).whenComplete(() {
-      if (!completer.isCompleted) completer.completeError('cannot get torrent');
+      if (!completer.isCompleted) {
+        completer.completeError(SocketException('cannot get torrent'));
+      }
     });
     return completer.future;
   }
