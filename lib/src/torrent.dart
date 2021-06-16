@@ -1,7 +1,10 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:torrent/src/bencode.dart';
 import 'package:crypto/crypto.dart' show sha1;
+
+import 'bep/bep0003.dart';
 
 class TorrentFile {
   List<String> path;
@@ -25,7 +28,14 @@ class Torrent {
   final int? creationDate;
   final String? createdBy;
   final int pieceLength;
-  final Uint8List pieces;
+  final List<Uint8List> pieces;
+
+  int? _length;
+  int get length =>
+      _length ??= files.map((e) => e.length).reduce((a, b) => a + b);
+
+  int blocksInPiece(int index) =>
+      (min(pieceLength, length - index * pieceLength) / BLOCK_SIZE).ceil();
 
   Torrent._(
     this.raw,
@@ -65,12 +75,16 @@ class Torrent {
     } else {
       torrentFiles.add(TorrentFile([name.string], data['info']['length']));
     }
+    final Uint8List pieces = data['info']['pieces'].bytes;
     return Torrent._(
       data,
       torrentFiles,
       trackers,
       data['info']['piece length'],
-      data['info']['pieces'].bytes,
+      List<Uint8List>.generate(
+        pieces.length ~/ 20,
+        (i) => pieces.sublist(20 * i, 20 * i + 20),
+      ),
       data['creation date'],
       data['created by']?.string,
     );

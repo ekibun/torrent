@@ -4,9 +4,9 @@ import 'dart:typed_data';
 import 'package:torrent/src/bencode.dart';
 import 'package:torrent/src/bep/bep0003.dart';
 
-const EXTENDED_PROTOCOL = 20;
-
 mixin PeerBep0010 on PeerBep0003 {
+  static const OP_EXTENDED = 20;
+
   @override
   Uint8List get selfReserved => super.selfReserved..[5] |= 0x10;
 
@@ -25,8 +25,8 @@ mixin PeerBep0010 on PeerBep0003 {
   }
 
   @override
-  void onMessage(int id, Uint8List data) {
-    if (id != EXTENDED_PROTOCOL) return super.onMessage(id, data);
+  void onMessage(int op, Uint8List data) {
+    if (op != OP_EXTENDED) return super.onMessage(op, data);
     final extId = data[0];
     if (extId == 0) {
       onExtendHandshake(Bencode.decode(data, 1));
@@ -43,14 +43,14 @@ mixin PeerBep0010 on PeerBep0003 {
   }
 
   void sendExtendMessage(String key, Uint8List payload) =>
-      sendPacket(EXTENDED_PROTOCOL, [
+      sendPacket(OP_EXTENDED, [
         _extendMessageId[key]!,
         ...payload,
       ]);
 
   Future extendHandshake() {
     var messageId = 0;
-    sendPacket(EXTENDED_PROTOCOL, [
+    sendPacket(OP_EXTENDED, [
       0,
       ...Bencode.encode(
           {'m': onExtendMessage.map((k, v) => MapEntry(k, ++messageId))})

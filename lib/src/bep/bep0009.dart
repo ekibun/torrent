@@ -7,9 +7,9 @@ import 'package:torrent/src/bep/bep0003.dart';
 import 'package:torrent/src/bep/bep0010.dart';
 import 'package:torrent/src/torrent.dart';
 
-const _EXTENDED_METADATA_ID = 'ut_metadata';
-
 mixin PeerBep0009 on PeerBep0010 {
+  static const _EXTENDED_METADATA_ID = 'ut_metadata';
+
   int metaDataSize = 0;
 
   final _pending = <int, Completer<Uint8List>>{};
@@ -48,19 +48,19 @@ mixin PeerBep0009 on PeerBep0010 {
     if (metaDataSize == 0) {
       throw SocketException('$this has no metadata');
     }
-    const metaDataPieceSize = PIECE_SIZE;
-    final metaDataPieceLength = (metaDataSize / metaDataPieceSize).ceil();
+    final metaDataPieceLength = (metaDataSize / BLOCK_SIZE).ceil();
     final metaDataBuffer = Uint8List(metaDataSize);
-    for (var pid = 0; pid < metaDataPieceLength; ++pid) {
+    for (var i = 0; i < metaDataPieceLength; ++i) {
       final completer = Completer<Uint8List>();
-      final oldCompleter = _pending[pid];
+      final oldCompleter = _pending[i];
       if (oldCompleter?.isCompleted == false) {
         oldCompleter!.completeError(SocketException('cancel'));
       }
-      _pending[pid] = completer;
+      _pending[i] = completer;
       sendExtendMessage(
-          _EXTENDED_METADATA_ID, Bencode.encode({'msg_type': 0, 'piece': pid}));
-      metaDataBuffer.setAll(pid * metaDataPieceSize, await completer.future);
+          _EXTENDED_METADATA_ID, Bencode.encode({'msg_type': 0, 'piece': i}));
+      final data = await completer.future;
+      metaDataBuffer.setAll(i * BLOCK_SIZE, data);
     }
     if (Torrent.parseInfoHash(metaDataBuffer).string != task?.infoHash.string) {
       throw SocketException('infohash not matched');

@@ -3,7 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 class ByteString {
-  final List<int> bytes;
+  final Uint8List bytes;
   String? _utf8;
 
   String get string {
@@ -15,10 +15,11 @@ class ByteString {
 
   int operator [](int i) => bytes[i];
 
-  ByteString(this.bytes);
+  ByteString(List<int> bytes)
+      : bytes = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
   ByteString.str(String str)
       : _utf8 = str,
-        bytes = utf8.encode(str);
+        bytes = Uint8List.fromList(utf8.encode(str));
 
   ByteString.int(int value, int length)
       : bytes = Uint8List.fromList(List.generate(

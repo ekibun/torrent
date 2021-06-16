@@ -55,7 +55,7 @@ class Tracker {
       final int interval = data['min interval'] ?? data['interval'] ?? 300;
       _timer = Timer.periodic(Duration(seconds: interval),
           (_) => _recursive().catchError((_) => {}));
-    });
+    }).catchError((_) {});
   }
 
   void stop() {

@@ -7,10 +7,20 @@ import 'package:torrent/src/bitfield.dart';
 import 'package:torrent/src/socket.dart';
 import 'package:torrent/src/task.dart';
 
-const PIECE_SIZE = 16 * 1024;
+const BLOCK_SIZE = 1 << 14; // 16 kB
 const BITTORRENT_PROTOCOL = 'BitTorrent protocol';
 
 abstract class PeerBep0003 {
+  static const OP_CHOKE = 0;
+  static const OP_UNCHOKE = 1;
+  static const OP_INTERESTED = 2;
+  static const OP_NOT_INTERESTED = 3;
+  static const OP_HAVE = 4;
+  static const OP_BITFIELD = 5;
+  static const OP_REQUEST = 6;
+  static const OP_PIECE = 7;
+  static const OP_CANCEL = 8;
+
   final InternetAddress ip;
   final int port;
   PeerBep0003(this.ip, this.port);
@@ -87,14 +97,15 @@ abstract class PeerBep0003 {
   }
 
   Future close() async {
+    task = null;
     _keepAliveTimer?.cancel();
     return _socket?.close();
   }
 
-  void sendPacket([int? id, List<int>? data]) {
+  void sendPacket([int? op, List<int>? data]) {
     final post = List<int>.from(
-        ByteString.int((data?.length ?? 0) + (id == null ? 0 : 1), 4).bytes);
-    if (id != null) post.add(id);
+        ByteString.int((data?.length ?? 0) + (op == null ? 0 : 1), 4).bytes);
+    if (op != null) post.add(op);
     if (data != null) post.addAll(data);
     _socket?.add(post);
   }
@@ -128,34 +139,34 @@ abstract class PeerBep0003 {
     }
   }
 
-  void onMessage(int id, Uint8List data) {
-    switch (id) {
-      case 0: // choke
+  void onMessage(int op, Uint8List data) {
+    switch (op) {
+      case OP_CHOKE:
         _isChoking = true;
         return;
-      case 1: // unchoke
+      case OP_UNCHOKE:
         _isChoking = false;
         return;
-      case 2: // interested
+      case OP_INTERESTED:
         _isInterested = true;
         return;
-      case 3: // not interested
+      case OP_NOT_INTERESTED:
         _isInterested = false;
         return;
-      case 4: // have
+      case OP_HAVE:
         bitfield[ByteString(data).toInt()] = true;
         return;
-      case 5: // bitfield
+      case OP_BITFIELD:
         bitfield.bytes = data;
         return;
-      case 6: // request
+      case OP_REQUEST:
         return;
-      case 7: // piece
+      case OP_PIECE:
         final index = ByteString(data.sublist(0, 4)).toInt();
         final offset = ByteString(data.sublist(4, 8)).toInt();
-        task?.onPiece.call(index, offset, data.sublist(8));
+        task?.onPiece.call(this, index, offset, data.sublist(8));
         return;
-      case 8: // cancel
+      case OP_CANCEL:
         return;
     }
     throw UnimplementedError('Message id $id not supported');
@@ -167,34 +178,34 @@ abstract class PeerBep0003 {
 
   void choke() {
     _amChoking = true;
-    sendPacket(0);
+    sendPacket(OP_CHOKE);
   }
 
   void unchoke() {
     _amChoking = false;
-    sendPacket(1);
+    sendPacket(OP_UNCHOKE);
   }
 
   void interested() {
     _amInterested = true;
-    sendPacket(2);
+    sendPacket(OP_INTERESTED);
   }
 
   void notinterested() {
     _amInterested = false;
-    sendPacket(3);
+    sendPacket(OP_NOT_INTERESTED);
   }
 
   void sendHave(int index) {
-    sendPacket(4, ByteString.int(index, 4).bytes);
+    sendPacket(OP_HAVE, ByteString.int(index, 4).bytes);
   }
 
   void sendBitfield() {
-    sendPacket(5, bitfield.bytes);
+    sendPacket(OP_BITFIELD, bitfield.bytes);
   }
 
-  void request(int index, int offset, [int length = PIECE_SIZE]) {
-    sendPacket(6, [
+  void request(int index, int offset, int length) {
+    sendPacket(OP_REQUEST, [
       ...ByteString.int(index, 4).bytes,
       ...ByteString.int(offset, 4).bytes,
       ...ByteString.int(length, 4).bytes,
@@ -202,7 +213,7 @@ abstract class PeerBep0003 {
   }
 
   void sendPiece(int index, int offset, List<int> data) {
-    sendPacket(7, [
+    sendPacket(OP_PIECE, [
       ...ByteString.int(index, 4).bytes,
       ...ByteString.int(offset, 4).bytes,
       ...data,
@@ -210,7 +221,7 @@ abstract class PeerBep0003 {
   }
 
   void sendCancel(int index, int offset, int length) {
-    sendPacket(8, [
+    sendPacket(OP_CANCEL, [
       ...ByteString.int(index, 4).bytes,
       ...ByteString.int(offset, 4).bytes,
       ...ByteString.int(length, 4).bytes,
