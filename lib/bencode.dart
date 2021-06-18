@@ -1,25 +1,39 @@
-import 'dart:convert';
-import 'dart:math';
-import 'dart:typed_data';
+import 'dart:convert' as _convert;
+import 'dart:math' show Random;
+import 'dart:typed_data' show Uint8List, BytesBuilder;
 
 class ByteString {
   final Uint8List bytes;
   String? _utf8;
+  String? _hex;
 
-  String get string {
-    _utf8 ??= utf8.decode(bytes, allowMalformed: true);
+  String get utf8 {
+    _utf8 ??= _convert.utf8.decode(bytes, allowMalformed: true);
     return _utf8!;
+  }
+
+  @override
+  String toString() {
+    _hex ??= bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return _hex!;
   }
 
   int get length => bytes.length;
 
   int operator [](int i) => bytes[i];
 
+  @override
+  bool operator ==(Object? b) =>
+      b is String ? b == utf8 : b.toString() == toString();
+
+  @override
+  int get hashCode => toString().hashCode;
+
   ByteString(List<int> bytes)
       : bytes = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
   ByteString.str(String str)
       : _utf8 = str,
-        bytes = Uint8List.fromList(utf8.encode(str));
+        bytes = Uint8List.fromList(_convert.utf8.encode(str));
 
   ByteString.int(int value, int length)
       : bytes = Uint8List.fromList(List.generate(
@@ -32,11 +46,6 @@ class ByteString {
   static ByteString rand(int length) {
     final rand = Random();
     return ByteString(List.generate(length, (_) => rand.nextInt(256)));
-  }
-
-  @override
-  String toString() {
-    return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
   int toInt() {
@@ -59,7 +68,7 @@ class BencodeScanner {
           final key = next();
           if (!(key is ByteString)) return dict;
           final value = next();
-          dict[key.string] = value;
+          dict[key.utf8] = value;
         }
       case 'l':
         final list = <dynamic>[];
@@ -90,23 +99,23 @@ class Bencode {
   static Uint8List encode(dynamic data) {
     final ret = BytesBuilder();
     if (data is int) {
-      ret.add(ascii.encode('i${data.toString()}e'));
+      ret.add(_convert.ascii.encode('i${data.toString()}e'));
     } else if (data is Map) {
-      ret.add(ascii.encode('d'));
+      ret.add(_convert.ascii.encode('d'));
       for (var item in data.entries) {
         ret.add(encode(item.key));
         ret.add(encode(item.value));
       }
-      ret.add(ascii.encode('e'));
+      ret.add(_convert.ascii.encode('e'));
     } else if (data is List) {
-      ret.add(ascii.encode('l'));
+      ret.add(_convert.ascii.encode('l'));
       for (var item in data) {
         ret.add(encode(item));
       }
-      ret.add(ascii.encode('e'));
+      ret.add(_convert.ascii.encode('e'));
     } else if (data is ByteString || data is String) {
-      final str = data is ByteString ? data.bytes : utf8.encode(data);
-      ret.add(ascii.encode('${str.length}:'));
+      final str = data is ByteString ? data.bytes : _convert.utf8.encode(data);
+      ret.add(_convert.ascii.encode('${str.length}:'));
       ret.add(str);
     }
     return ret.toBytes();

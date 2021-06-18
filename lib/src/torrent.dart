@@ -1,97 +1,119 @@
-import 'dart:math';
-import 'dart:typed_data';
+part of 'package:torrent/torrent.dart';
 
-import 'package:torrent/src/bencode.dart';
-import 'package:crypto/crypto.dart' show sha1;
+const BLOCK_SIZE = 1 << 14;
 
-import 'bep/bep0003.dart';
+class TorrentMessage {}
 
-class TorrentFile {
-  List<String> path;
-  int length;
-  int offset;
-  TorrentFile(
-    this.path,
-    this.length, [
-    this.offset = 0,
-  ]);
-
-  @override
-  String toString() =>
-      'File(path=${path.join('/')}, len=$length, offset=$offset)';
+class TorrentError extends TorrentMessage {
+  final error;
+  final stack;
+  TorrentError(this.error, this.stack);
 }
 
-class Torrent {
-  final Map raw;
-  final List<TorrentFile> files;
-  final List<String> announces;
-  final int? creationDate;
-  final String? createdBy;
-  final int pieceLength;
-  final List<Uint8List> pieces;
+class _BaseTorrent {
+  final ByteString peerId;
+  final ByteString infoHash;
 
-  int? _length;
-  int get length =>
-      _length ??= files.map((e) => e.length).reduce((a, b) => a + b);
+  MetaData? _metadata;
+  MetaData get metadata => _metadata!;
 
-  int blocksInPiece(int index) =>
-      (min(pieceLength, length - index * pieceLength) / BLOCK_SIZE).ceil();
+  Timer? _updateTimer;
+  void _onUpdate(int now) {}
 
-  Torrent._(
-    this.raw,
-    this.files,
-    this.announces,
-    this.pieceLength,
-    this.pieces, [
-    this.creationDate,
-    this.createdBy,
-  ]);
+  final _stream = StreamController<TorrentMessage>.broadcast();
+  void _emitError(error, stack) {
+    _stream.add(TorrentError(error, stack));
+  }
 
-  static Torrent parse(Map data) {
+  Stream<T> on<T extends TorrentMessage>() {
+    return _stream.stream.where((m) => m is T).cast<T>();
+  }
+
+  _BaseTorrent(this.infoHash, this.peerId);
+
+  bool get isRunning => _updateTimer?.isActive ?? false;
+
+  void start() {
+    _updateTimer?.cancel();
+    _updateTimer = Timer.periodic(
+      Duration(seconds: 1),
+      (_) => _onUpdate(DateTime.now().millisecondsSinceEpoch),
+    );
+  }
+
+  void pause() {
+    _updateTimer?.cancel();
+    _updateTimer = null;
+  }
+
+  void stop() {
+    pause();
+  }
+}
+
+class Torrent extends _BaseTorrent
+    with _PeerManager, _TorrentTask, _TrackerManager {
+  Torrent._(ByteString infoHash, [ByteString? peerId])
+      : super(infoHash, peerId ?? ByteString.rand(20));
+
+  static Torrent fromTorrentData(Uint8List bytes, [ByteString? peerId]) {
+    final data = Bencode.decode(bytes);
     final trackers = <String>[];
     final announceList = data['announce-list'];
     final announce = data['announce'];
     if (announceList is List) {
       for (var announces in announceList) {
-        trackers
-            .addAll(List.from(announces.map((announce) => announce.string)));
+        trackers.addAll(List.from(announces.map((announce) => announce.utf8)));
       }
     } else if (announce is ByteString) {
-      trackers.add(announce.string);
+      trackers.add(announce.utf8);
     }
-    final torrentFiles = <TorrentFile>[];
-    final files = data['info']['files'];
-    final name = data['info']['name'];
-    if (files is List) {
-      var offset = 0;
-      torrentFiles.addAll(files.map((file) {
-        int length = file['length'];
-        offset += length;
-        return TorrentFile(
-            List<String>.from([name, ...file['path']].map((b) => b.string)),
-            length,
-            offset - length);
-      }));
-    } else {
-      torrentFiles.add(TorrentFile([name.string], data['info']['length']));
-    }
-    final Uint8List pieces = data['info']['pieces'].bytes;
-    return Torrent._(
-      data,
-      torrentFiles,
-      trackers,
-      data['info']['piece length'],
-      List<Uint8List>.generate(
-        pieces.length ~/ 20,
-        (i) => pieces.sublist(20 * i, 20 * i + 20),
-      ),
-      data['creation date'],
-      data['created by']?.string,
-    );
+    final metadata = MetaData.fromMap(data['info']);
+    return Torrent._(metadata.infoHash, peerId)
+      .._metadata = metadata
+      ..addTrackers(trackers);
   }
 
-  ByteString get infoHash => parseInfoHash(Bencode.encode(raw['info']));
+  static Torrent fromMagnet(String uri, [ByteString? peerId]) {
+    final magnet = Uri.parse(uri);
+    final infoHashStr = magnet.queryParameters['xt']!.substring(9);
+    final infoHash = infoHashStr.length == 40
+        ? ByteString.hex(infoHashStr)
+        : ByteString(base32.decode(infoHashStr));
+    return Torrent._(infoHash, peerId)
+      ..addTrackers(magnet.queryParametersAll['tr'] ?? []);
+  }
 
-  static ByteString parseInfoHash(Uint8List info) =>
-      ByteString(sha1.convert(info).bytes);
+  Future<MetaData> getMetaData() {
+    if (_metadata != null) return Future.value(_metadata);
+    final completer = Completer<MetaData>();
+    Future.wait(_trackers.map<Future<dynamic>>((tracker) async {
+      try {
+        final announce = await tracker.announce(
+            infoHash, peerId, port, uploaded, downloaded, left);
+        if (completer.isCompleted) return;
+        announce.peers.forEach((peer) async {
+          try {
+            if (await _onPeer(peer) == false) return;
+            final metadata = await peer.getMetadata(completer);
+            if (MetaData.parseInfoHash(metadata).utf8 != infoHash.utf8) {
+              throw 'infohash not matched';
+            }
+            _metadata = MetaData.fromMap(Bencode.decode(metadata));
+            completer.complete(_metadata);
+          } catch (error, stack) {
+            _emitError(error, stack);
+            await peer.close();
+          }
+        });
+      } catch (error, stack) {
+        _emitError(error, stack);
+      }
+    })).whenComplete(() {
+      if (!completer.isCompleted) {
+        completer.completeError(SocketException('cannot get metadata'));
+      }
+    });
+    return completer.future;
+  }
 }

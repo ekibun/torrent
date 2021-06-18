@@ -1,22 +1,15 @@
-import 'dart:async';
-import 'dart:io';
-import 'dart:typed_data';
+part of 'package:torrent/torrent.dart';
 
-import 'package:torrent/src/bencode.dart';
-import 'package:torrent/src/bep/bep0003.dart';
-import 'package:torrent/src/bep/bep0010.dart';
-import 'package:torrent/src/torrent.dart';
-
-mixin PeerBep0009 on PeerBep0010 {
+mixin _Peer0009 on _Peer0010 {
   static const _EXTENDED_METADATA_ID = 'ut_metadata';
 
   int metaDataSize = 0;
 
-  final _pending = <int, Completer<Uint8List>>{};
+  final _pendingMetaData = <int, Completer<Uint8List>>{};
 
   @override
-  Map<String, void Function(Uint8List)> get onExtendMessage =>
-      super.onExtendMessage
+  Map<String, void Function(Uint8List)> get _onExtendMessage =>
+      super._onExtendMessage
         ..[_EXTENDED_METADATA_ID] = (data) {
           final scanner = BencodeScanner(data);
           final message = scanner.next();
@@ -26,7 +19,7 @@ mixin PeerBep0009 on PeerBep0010 {
             // request
             return;
           }
-          final completer = _pending.remove(message['piece']);
+          final completer = _pendingMetaData.remove(message['piece']);
           if (completer?.isCompleted == false) {
             if (type == 1) {
               completer?.complete(data.sublist(scanner.pos));
@@ -38,9 +31,9 @@ mixin PeerBep0009 on PeerBep0010 {
         };
 
   @override
-  void onExtendHandshake(Map message) {
+  void _onExtendHandshake(Map message) {
     metaDataSize = message['metadata_size'] ?? metaDataSize;
-    super.onExtendHandshake(message);
+    super._onExtendHandshake(message);
   }
 
   Future<Uint8List> getMetadata([Completer? signal]) async {
@@ -52,18 +45,16 @@ mixin PeerBep0009 on PeerBep0010 {
     final metaDataBuffer = Uint8List(metaDataSize);
     for (var i = 0; i < metaDataPieceLength; ++i) {
       final completer = Completer<Uint8List>();
-      final oldCompleter = _pending[i];
+      final oldCompleter = _pendingMetaData[i];
       if (oldCompleter?.isCompleted == false) {
         oldCompleter!.completeError(SocketException('cancel'));
       }
-      _pending[i] = completer;
-      sendExtendMessage(
+      _pendingMetaData[i] = completer;
+      _sendExtendMessage(
           _EXTENDED_METADATA_ID, Bencode.encode({'msg_type': 0, 'piece': i}));
       final data = await completer.future;
+      if (signal?.isCompleted != false) throw 'cancel';
       metaDataBuffer.setAll(i * BLOCK_SIZE, data);
-    }
-    if (Torrent.parseInfoHash(metaDataBuffer).string != task?.infoHash.string) {
-      throw SocketException('infohash not matched');
     }
     return metaDataBuffer;
   }
