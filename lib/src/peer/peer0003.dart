@@ -28,12 +28,14 @@ abstract class _Peer0003 {
 
   bool get isConnected => _handshakeCompleter?.isCompleted ?? false;
 
+  DateTime get lastActive => _lastActive;
   bool get amChoking => _amChoking;
   bool get amInterested => _amInterested;
   bool get isChoking => _isChoking;
   bool get isInterested => _isInterested;
 
   final _pendingBlocks = <_BlockRequest>{};
+  final _requestingBlocks = <_BlockRequest, Completer<Piece>>{};
 
   Uint8List get _selfReserved => Uint8List(8);
 
@@ -42,11 +44,6 @@ abstract class _Peer0003 {
   }
 
   Completer<Socket>? _handshakeCompleter;
-
-  void _onPiece(int index, int offset, Uint8List data) {
-    _pendingBlocks.removeWhere(
-        (pending) => pending.index == index && pending.offset == offset);
-  }
 
   void _onHandshaked() {}
 
@@ -88,9 +85,9 @@ abstract class _Peer0003 {
                   BITTORRENT_PROTOCOL) {
             throw 'Bad handshake response';
           }
-          reserved = ByteString(data.sublist(
+          reserved = ByteString(buffer.sublist(
               BITTORRENT_PROTOCOL.length + 1, BITTORRENT_PROTOCOL.length + 9));
-          id = ByteString(data.sublist(BITTORRENT_PROTOCOL.length + 29,
+          id = ByteString(buffer.sublist(BITTORRENT_PROTOCOL.length + 29,
               BITTORRENT_PROTOCOL.length + 49));
           buffer.removeRange(0, BITTORRENT_PROTOCOL.length + 49);
           _onHandshaked();
@@ -123,6 +120,8 @@ abstract class _Peer0003 {
     return handshakeCompleter.future;
   }
 
+  void _onRequestError(_BlockRequest req, error, stack) {}
+
   void _onMessage(_PeerManager task, int op, Uint8List data) {
     switch (op) {
       case OP_CHOKE:
@@ -141,18 +140,43 @@ abstract class _Peer0003 {
         bitfield[ByteString(data).toInt()] = true;
         return;
       case OP_BITFIELD:
+        bitfield.haveAll = false;
         bitfield.bytes = data;
         return;
       case OP_REQUEST:
+        final index = ByteString(data.sublist(0, 4)).toInt();
+        final offset = ByteString(data.sublist(4, 8)).toInt();
+        final length = ByteString(data.sublist(8, 12)).toInt();
+        if (_amChoking) return;
+        final req = _BlockRequest(index, offset, length);
+        final completer = _requestingBlocks[req] ??= Completer();
+        task._onRequest(completer, index, offset, length);
+        completer.future.then((piece) {
+          sendPiece(
+            index,
+            offset,
+            piece.buffer.sublist(offset, offset + length),
+          );
+        }, onError: (err, stack) {
+          _onRequestError(req, err, stack);
+        }).whenComplete(() {
+          _requestingBlocks.remove(req);
+        });
         return;
       case OP_PIECE:
         final index = ByteString(data.sublist(0, 4)).toInt();
         final offset = ByteString(data.sublist(4, 8)).toInt();
         final buffer = data.sublist(8);
-        _onPiece(index, offset, buffer);
+        _pendingBlocks.removeWhere(
+            (pending) => pending.index == index && pending.offset == offset);
         task._onPiece(index, offset, buffer);
         return;
       case OP_CANCEL:
+        final index = ByteString(data.sublist(0, 4)).toInt();
+        final offset = ByteString(data.sublist(4, 8)).toInt();
+        final length = ByteString(data.sublist(8, 12)).toInt();
+        final req = _BlockRequest(index, offset, length);
+        _requestingBlocks[req]?.completeError('cancel');
         return;
     }
     throw UnimplementedError('Message id $id not supported');
@@ -196,7 +220,7 @@ abstract class _Peer0003 {
     sendPacket(OP_HAVE, ByteString.int(index, 4).bytes);
   }
 
-  void sendBitfield() {
+  void sendBitfield(Bitfield bitfield) {
     sendPacket(OP_BITFIELD, bitfield.bytes);
   }
 

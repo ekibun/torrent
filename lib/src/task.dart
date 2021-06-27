@@ -27,6 +27,8 @@ class _BlockRequest {
   bool operator ==(b) =>
       b is _BlockRequest && b.index == index && b.offset == offset;
 
+  int get hashCode => index.hashCode;
+
   static bool Function(_BlockRequest) comparator(int index, int offset) =>
       (p) => p.index == index && p.offset == offset;
 }
@@ -45,18 +47,11 @@ mixin _TorrentTask on _PeerManager {
 
   final _requestingBlocks = <_BlockRequest>{};
   final _pendingPieces = <Piece>{};
-  final _requestingPieces = <int>{};
-
-  void downloadPieces(int from, int to) {
-    for (var i = from; i < to; ++i) {
-      _requestingPieces.add(i);
-    }
-  }
 
   @override
   void _onPiece(int index, int offset, Uint8List data) {
     super._onPiece(index, offset, data);
-    final comp = _BlockRequest.comparator(index, offset);
+    final comp = (_BlockRequest p) => p.index == index && p.offset == offset;
     _requestingBlocks.removeWhere(comp);
     for (var peer in _peers) {
       peer._pendingBlocks.removeWhere((req) {
@@ -72,7 +67,6 @@ mixin _TorrentTask on _PeerManager {
       final piece = _pendingPieces.firstWhere((p) => p.index == index);
       piece.buffer.setAll(offset, data);
       piece.blocks[blockIndex] = true;
-      print('$index - ${piece.blocks}');
       if (piece.blocks
           .isFullfilled((piece.buffer.length / BLOCK_SIZE).ceil())) {
         if (ByteString(sha1.convert(piece.buffer).bytes).toString() !=
@@ -80,9 +74,40 @@ mixin _TorrentTask on _PeerManager {
           throw 'hash not match';
         }
         _pendingPieces.remove(piece);
+        for (var peer in _peers) {
+          if (!peer.isConnected) continue;
+          peer.sendHave(index);
+        }
+        storage?.writePiece(_metadata!, piece);
         _stream.add(PieceChecked(piece));
       }
     }
+  }
+
+  int _pieceDownloadPos = 0;
+  int _pieceDownloadEnd = 0;
+  void seekTo(int offset, int length) {
+    final metadata = _metadata;
+    if (metadata == null) return;
+    _pieceDownloadPos = offset ~/ metadata.pieceLength;
+    _pieceDownloadEnd = ((offset + length) / metadata.pieceLength).ceil();
+    _cancelPieces();
+  }
+
+  void _cancelPieces() {
+    _requestingBlocks.clear();
+    for (var peer in _peers) {
+      peer._pendingBlocks.forEach((req) {
+        peer.sendCancel(req.index, req.offset, req.length);
+      });
+      peer._pendingBlocks.clear();
+    }
+  }
+
+  @override
+  void pause() {
+    super.pause();
+    _cancelPieces();
   }
 
   @override
@@ -115,9 +140,8 @@ mixin _TorrentTask on _PeerManager {
     final metadata = _metadata;
     if (metadata == null) return;
     while (_requestingBlocks.length < 100) {
-      if (_requestingPieces.isEmpty) break;
-      final index = _requestingPieces.first;
-      _requestingPieces.remove(index);
+      if (_pieceDownloadPos > _pieceDownloadEnd) break;
+      final index = _pieceDownloadPos++;
       _pendingPieces.add(Piece(index, metadata.pieceSize(index)));
       final blocks = metadata.blocksInPiece(index);
       for (var b = 0; b < blocks; ++b) {

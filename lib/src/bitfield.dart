@@ -1,4 +1,4 @@
-import 'dart:typed_data' show Uint8List;
+part of 'package:torrent/torrent.dart';
 
 class Bitfield {
   bool haveAll = false;

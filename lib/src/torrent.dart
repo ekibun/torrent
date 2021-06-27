@@ -15,7 +15,6 @@ class _BaseTorrent {
   final ByteString infoHash;
 
   MetaData? _metadata;
-  MetaData get metadata => _metadata!;
 
   Timer? _updateTimer;
   void _onUpdate(int now) {}
@@ -62,6 +61,7 @@ class Torrent extends _BaseTorrent
     final announceList = data['announce-list'];
     final announce = data['announce'];
     if (announceList is List) {
+      // BEP 12
       for (var announces in announceList) {
         trackers.addAll(List.from(announces.map((announce) => announce.utf8)));
       }
