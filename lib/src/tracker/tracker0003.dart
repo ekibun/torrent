@@ -40,7 +40,7 @@ class _HttpTracker extends Tracker {
     } else if (peers is List) {
       // BEP 03
       ret.peers.addAll(peers.map((peer) => Peer(
-            InternetAddress.tryParse((peer['ip'] as ByteString).utf8)!,
+            InternetAddress.tryParse((peer['ip'] as ByteString).toString())!,
             peer['port'],
           )));
     }

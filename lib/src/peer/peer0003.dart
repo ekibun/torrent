@@ -81,7 +81,7 @@ abstract class _Peer0003 {
           if (buffer.length < BITTORRENT_PROTOCOL.length + 49) return;
           if (buffer[0] != BITTORRENT_PROTOCOL.length ||
               ByteString(buffer.sublist(1, 1 + BITTORRENT_PROTOCOL.length))
-                      .utf8 !=
+                      .toString() !=
                   BITTORRENT_PROTOCOL) {
             throw 'Bad handshake response';
           }

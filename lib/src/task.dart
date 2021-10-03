@@ -69,8 +69,8 @@ mixin _TorrentTask on _PeerManager {
       piece.blocks[blockIndex] = true;
       if (piece.blocks
           .isFullfilled((piece.buffer.length / BLOCK_SIZE).ceil())) {
-        if (ByteString(sha1.convert(piece.buffer).bytes).toString() !=
-            _metadata!.pieces[index].toString()) {
+        if (ByteString(sha1.convert(piece.buffer).bytes).hex !=
+            _metadata!.pieces[index].hex) {
           throw 'hash not match';
         }
         _pendingPieces.remove(piece);

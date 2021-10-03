@@ -7,13 +7,13 @@ class ByteString {
   String? _utf8;
   String? _hex;
 
-  String get utf8 {
+  @override
+  String toString() {
     _utf8 ??= _convert.utf8.decode(bytes, allowMalformed: true);
     return _utf8!;
   }
 
-  @override
-  String toString() {
+  String get hex {
     _hex ??= bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     return _hex!;
   }
@@ -23,14 +23,18 @@ class ByteString {
   int operator [](int i) => bytes[i];
 
   @override
-  bool operator ==(Object? b) =>
-      b is String ? b == utf8 : b.toString() == toString();
+  bool operator ==(Object? b) => b is String
+      ? b == toString()
+      : b is ByteString
+          ? b.hex == hex
+          : false;
 
   @override
   int get hashCode => toString().hashCode;
 
   ByteString(List<int> bytes)
       : bytes = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+
   ByteString.str(String str)
       : _utf8 = str,
         bytes = Uint8List.fromList(_convert.utf8.encode(str));
@@ -53,22 +57,33 @@ class ByteString {
   }
 }
 
+mixin BencodeObject<T extends BencodeObject<T>> {
+  abstract String encodeKey;
+  T decode(dynamic data);
+  dynamic encode();
+}
+
 class BencodeScanner {
   Uint8List data;
+  final List<BencodeObject>? extend;
   var pos = 0;
-  BencodeScanner(this.data);
+  BencodeScanner(this.data, {this.extend});
 
   Object? next() {
     switch (String.fromCharCode(data[pos++])) {
+      case 'x':
+        final key = next().toString();
+        final value = next();
+        return extend?.firstWhere((o) => o.encodeKey == key).decode(value);
       case 'e':
         return null;
       case 'd':
         final dict = <String, dynamic>{};
         while (true) {
           final key = next();
-          if (!(key is ByteString)) return dict;
+          if (key == null) return dict;
           final value = next();
-          dict[key.utf8] = value;
+          dict[key.toString()] = value;
         }
       case 'l':
         final list = <dynamic>[];
@@ -98,7 +113,11 @@ class BencodeScanner {
 class Bencode {
   static Uint8List encode(dynamic data) {
     final ret = BytesBuilder();
-    if (data is int) {
+    if (data is BencodeObject) {
+      ret.add(_convert.ascii.encode('x'));
+      ret.add(encode(data.encodeKey));
+      ret.add(encode(data.encode()));
+    } else if (data is int) {
       ret.add(_convert.ascii.encode('i${data.toString()}e'));
     } else if (data is Map) {
       ret.add(_convert.ascii.encode('d'));
@@ -117,12 +136,21 @@ class Bencode {
       final str = data is ByteString ? data.bytes : _convert.utf8.encode(data);
       ret.add(_convert.ascii.encode('${str.length}:'));
       ret.add(str);
+    } else if (data == null) {
+      ret.add(_convert.ascii.encode('e'));
+    } else {
+      print('Unsupported $data');
+      ret.add(encode(data.toString()));
     }
     return ret.toBytes();
   }
 
-  static dynamic decode(Uint8List data, [int pos = 0]) {
-    final scanner = BencodeScanner(data)..pos = pos;
+  static dynamic decode(
+    Uint8List data, {
+    int pos = 0,
+    List<BencodeObject>? extend,
+  }) {
+    final scanner = BencodeScanner(data, extend: extend)..pos = pos;
     return scanner.next();
   }
 }

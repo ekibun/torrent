@@ -66,7 +66,7 @@ class Torrent extends _BaseTorrent
         trackers.addAll(List.from(announces.map((announce) => announce.utf8)));
       }
     } else if (announce is ByteString) {
-      trackers.add(announce.utf8);
+      trackers.add(announce.toString());
     }
     final metadata = MetaData.fromMap(data['info']);
     return Torrent._(metadata.infoHash, peerId)
@@ -96,7 +96,7 @@ class Torrent extends _BaseTorrent
           try {
             if (await _onPeer(peer) == false) return;
             final metadata = await peer.getMetadata(completer);
-            if (MetaData.parseInfoHash(metadata).utf8 != infoHash.utf8) {
+            if (MetaData.parseInfoHash(metadata).hex != infoHash.hex) {
               throw 'infohash not matched';
             }
             _metadata = MetaData.fromMap(Bencode.decode(metadata));

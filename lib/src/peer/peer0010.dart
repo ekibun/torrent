@@ -24,7 +24,7 @@ mixin _Peer0010 on _Peer0003 {
     }
     _reqq = message['reqq'] ?? 250;
     final c = message['v'];
-    if (c is ByteString) _client = c.utf8;
+    if (c is ByteString) _client = c.toString();
     _extendMessageId = Map<String, int>.from(message['m'] ?? _extendMessageId);
   }
 
@@ -33,7 +33,7 @@ mixin _Peer0010 on _Peer0003 {
     if (op != OP_EXTENDED) return super._onMessage(task, op, data);
     final extId = data[0];
     if (extId == 0) {
-      _onExtendHandshake(Bencode.decode(data, 1));
+      _onExtendHandshake(Bencode.decode(data, pos: 1));
     } else {
       _onExtendMessage.entries.elementAt(extId - 1).value(data.sublist(1));
     }
